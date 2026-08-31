@@ -1,3 +1,12 @@
+## [2.0.0]
+
+- Require Dart 3 (`>=3.0.0 <4.0.0`).
+- Add direct Thai CP874 encoding for `Generator.text` and `Generator.row`.
+- Upgrade `image` to 4.9.2 and migrate image command generation.
+- Remove the `hex` dependency.
+- Add exact-byte regression tests for Thai, `ESC *`, and `GS v 0` output.
+- Rewrite the README in Thai with current APIs and 1.x migration guidance.
+
 ## [1.1.0]
 
 - Null-Safety

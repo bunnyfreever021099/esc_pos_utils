@@ -2,174 +2,149 @@
 
 [![Pub Version](https://img.shields.io/pub/v/esc_pos_utils)](https://pub.dev/packages/esc_pos_utils)
 
-Base Flutter/Dart classes for ESC/POS printing. `Generator` class generates ESC/POS commands that can be sent to a thermal printer.
+ไลบรารี Flutter/Dart สำหรับสร้างคำสั่ง ESC/POS เป็น `List<int>` เพื่อนำไปส่งให้เครื่องพิมพ์ความร้อน รองรับข้อความภาษาไทยแบบ CP874 โดยตรงตั้งแต่เวอร์ชัน 2.0.0
 
-This is the "base" library that used for:
+แพ็กเกจนี้สร้าง byte เท่านั้น ไม่ได้เชื่อมต่อเครื่องพิมพ์เอง เลือกแพ็กเกจ transport ให้ตรงกับการเชื่อมต่อ เช่น [esc_pos_printer](https://github.com/andrey-ushakov/esc_pos_printer) สำหรับ Wi-Fi/Ethernet หรือ [esc_pos_bluetooth](https://github.com/andrey-ushakov/esc_pos_bluetooth) สำหรับ Bluetooth
 
-- Flutter WiFi/Ethernet printing: [esc_pos_printer](https://github.com/andrey-ushakov/esc_pos_printer)
-- Flutter Bluetooth printing: [esc_pos_bluetooth](https://github.com/andrey-ushakov/esc_pos_bluetooth)
+## สิ่งที่เปลี่ยนใน 2.0.0
 
-## Main Features
+| หัวข้อ | เวอร์ชัน 1.x | เวอร์ชัน 2.0.0 |
+| --- | --- | --- |
+| ภาษาไทย | `text()` เข้ารหัสด้วย Latin-1 จึงพิมพ์ไทยโดยตรงไม่ได้ ต้องเข้ารหัส CP874 เองผ่าน `textEncoded()` หรือแปลงเป็นรูปภาพ | `text()` และ `row()` เข้ารหัสภาษาไทยเป็น CP874 ได้โดยตรง |
+| Dart | Dart 2 (`>=2.12.0 <3.0.0`) | Dart 3 (`>=3.0.0 <4.0.0`) |
+| รูปภาพ | `image` 3.x | `image` 4.9.2 |
+| การแปลงตำแหน่ง byte | ใช้แพ็กเกจ `hex` | ใช้ฟังก์ชันภายใน ไม่ต้องพึ่ง `hex` |
 
-- Connect to Wi-Fi / Ethernet printers
-- Simple text printing using _text_ method
-- Tables printing using _row_ method
-- Text styling:
-  - size, align, bold, reverse, underline, different fonts, turn 90°
-- Print images
-- Print barcodes
-  - UPC-A, UPC-E, JAN13 (EAN13), JAN8 (EAN8), CODE39, ITF (Interleaved 2 of 5), CODABAR (NW-7), CODE128
-- Paper cut (partial, full)
-- Beeping (with different duration)
-- Paper feed, reverse feed
+การพิมพ์ภาษาไทยเป็น text เร็วกว่าการ rasterize ข้อความเป็นรูปภาพ และยังใช้การจัดแนว ขนาด ตัวหนา และตารางของ ESC/POS ได้ตามปกติ
 
-**Note**: Your printer may not support some of the presented features (some styles, partial/full paper cutting, reverse feed, barcodes...).
+## ติดตั้ง
 
-## Generate a Ticket
+```yaml
+dependencies:
+  esc_pos_utils:
+    git:
+      url: https://github.com/zx4545zx/esc_pos_utils.git
+      ref: master
+```
 
-### Simple ticket with styles:
+แพ็กเกจต้องใช้ Dart 3 ขึ้นไป จากนั้นรัน:
+
+```sh
+flutter pub get
+```
+
+## พิมพ์ภาษาไทย
+
+ตรวจ self-test ของเครื่องพิมพ์ก่อนว่าแสดง `PC874` หรือ `CP874` และดูหมายเลข code page ให้ตรงกับ profile เครื่องพิมพ์ ตัวอย่าง Xprinter XP-N160I ใช้ CP874 หมายเลข 70:
 
 ```dart
-List<int> testTicket() {
-  final List<int> bytes = [];
-  // Using default profile
-  final profile = await CapabilityProfile.load();
+final profile = await CapabilityProfile.load(name: 'XP-N160I');
+final generator = Generator(PaperSize.mm80, profile);
+
+final bytes = generator.text(
+  'ภาษาไทย',
+  styles: const PosStyles(codeTable: 'CP874'),
+);
+```
+
+คำสั่งที่ได้จะเลือก code page ด้วย `ESC t 70` แล้วตามด้วยข้อความ CP874 โดยตรง ไม่ได้สร้างรูปภาพ
+
+ถ้าต้องพิมพ์หลายบรรทัดด้วย CP874 สามารถตั้งเป็นค่า global:
+
+```dart
+final bytes = <int>[];
+bytes += generator.setGlobalCodeTable('CP874');
+bytes += generator.text('ใบเสร็จรับเงิน');
+bytes += generator.text('ยอดรวม 120 บาท');
+```
+
+หมายเลข CP874 แตกต่างกันได้ในแต่ละรุ่น จึงต้องเลือก `CapabilityProfile` ให้ตรงกับเครื่อง หากไม่มี profile ที่ตรง ให้เพิ่มข้อมูลใน `lib/resources/capabilities.json` ตาม self-test ของเครื่องพิมพ์ ตัวเข้ารหัสโดยตรงรองรับ ASCII และอักขระภาษาไทย; อักขระอื่น เช่น emoji จะทำให้เกิด `FormatException` กรณีนั้นใช้รูปภาพเฉพาะข้อความส่วนที่จำเป็น
+
+## สร้างใบเสร็จ
+
+```dart
+Future<List<int>> buildReceipt() async {
+  final profile = await CapabilityProfile.load(name: 'XP-N160I');
   final generator = Generator(PaperSize.mm80, profile);
-  List<int> bytes = [];
+  final bytes = <int>[];
 
+  bytes += generator.setGlobalCodeTable('CP874');
   bytes += generator.text(
-      'Regular: aA bB cC dD eE fF gG hH iI jJ kK lL mM nN oO pP qQ rR sS tT uU vV wW xX yY zZ');
-  bytes += generator.text('Special 1: àÀ èÈ éÉ ûÛ üÜ çÇ ôÔ',
-      styles: PosStyles(codeTable: PosCodeTable.westEur));
-  bytes += generator.text('Special 2: blåbærgrød',
-      styles: PosStyles(codeTable: PosCodeTable.westEur));
-
-  bytes += generator.text('Bold text', styles: PosStyles(bold: true));
-  bytes += generator.text('Reverse text', styles: PosStyles(reverse: true));
-  bytes += generator.text('Underlined text',
-      styles: PosStyles(underline: true), linesAfter: 1);
-  bytes += generator.text('Align left', styles: PosStyles(align: PosAlign.left));
-  bytes += generator.text('Align center', styles: PosStyles(align: PosAlign.center));
-  bytes += generator.text('Align right',
-      styles: PosStyles(align: PosAlign.right), linesAfter: 1);
-
-  bytes += generator.text('Text size 200%',
-      styles: PosStyles(
-        height: PosTextSize.size2,
-        width: PosTextSize.size2,
-      ));
-
+    'ร้านตัวอย่าง',
+    styles: const PosStyles(
+      align: PosAlign.center,
+      bold: true,
+      height: PosTextSize.size2,
+      width: PosTextSize.size2,
+    ),
+  );
+  bytes += generator.hr();
+  bytes += generator.row([
+    PosColumn(text: 'กาแฟ', width: 8),
+    PosColumn(
+      text: '60.00',
+      width: 4,
+      styles: const PosStyles(align: PosAlign.right),
+    ),
+  ]);
   bytes += generator.feed(2);
   bytes += generator.cut();
+
   return bytes;
 }
 ```
 
-### Print a table row:
+ผลรวม `width` ของทุก `PosColumn` ในหนึ่งแถวต้องเท่ากับ 12 ข้อความที่ยาวเกินพื้นที่จะถูกแบ่งไปแถวถัดไป
+
+## รูปภาพ
+
+รองรับคำสั่งรูปภาพสามแบบ โดยขึ้นอยู่กับความสามารถของเครื่องพิมพ์:
+
+- `ESC *` ผ่าน `generator.image()`
+- `GS v 0` ผ่าน `generator.imageRaster()`
+- `GS ( L` ผ่าน `generator.imageRaster(imageFn: PosImageFn.graphics)`
+
+ตัวอย่างสำหรับ `image` 4.x:
 
 ```dart
-generator.row([
-    PosColumn(
-      text: 'col3',
-      width: 3,
-      styles: PosStyles(align: PosAlign.center, underline: true),
-    ),
-    PosColumn(
-      text: 'col6',
-      width: 6,
-      styles: PosStyles(align: PosAlign.center, underline: true),
-    ),
-    PosColumn(
-      text: 'col3',
-      width: 3,
-      styles: PosStyles(align: PosAlign.center, underline: true),
-    ),
-  ]);
-```
-
-### Print an image:
-
-This package implements 3 ESC/POS functions:
-
-- `ESC *` - print in column format
-- `GS v 0` - print in bit raster format (obsolete)
-- `GS ( L` - print in bit raster format
-
-Note that your printer may support only some of the above functions.
-
-```dart
-import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:image/image.dart';
 
-final ByteData data = await rootBundle.load('assets/logo.png');
-final Uint8List bytes = data.buffer.asUint8List();
-final Image image = decodeImage(bytes);
-// Using `ESC *`
-generator.image(image);
-// Using `GS v 0` (obsolete)
-generator.imageRaster(image);
-// Using `GS ( L`
-generator.imageRaster(image, imageFn: PosImageFn.graphics);
+final data = await rootBundle.load('assets/logo.png');
+final image = decodeImage(data.buffer.asUint8List())!;
+
+final bytes = generator.image(image);
 ```
 
-### Print a Barcode:
+## Barcode และ QR Code
 
 ```dart
-final List<int> barData = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 4];
-generator.barcode(Barcode.upcA(barData));
+final barcodeBytes = generator.barcode(
+  Barcode.upcA([1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 4]),
+);
+
+final qrBytes = generator.qrcode('https://example.com');
 ```
 
-### Print a QR Code:
+Barcode ที่รองรับ ได้แก่ UPC-A, UPC-E, EAN13, EAN8, CODE39, ITF, CODABAR และ CODE128
 
-Using native ESC/POS commands:
+## Printer profiles
 
-```dart
-generator.qrcode('example.com');
-```
-
-To print a QR Code as an image (if your printer doesn't support native commands), add [qr_flutter](https://pub.dev/packages/qr_flutter) and [path_provider](https://pub.dev/packages/path_provider) as a dependency in your `pubspec.yaml` file.
-
-```dart
-String qrData = "google.com";
-const double qrSize = 200;
-try {
-  final uiImg = await QrPainter(
-    data: qrData,
-    version: QrVersions.auto,
-    gapless: false,
-  ).toImageData(qrSize);
-  final dir = await getTemporaryDirectory();
-  final pathName = '${dir.path}/qr_tmp.png';
-  final qrFile = File(pathName);
-  final imgFile = await qrFile.writeAsBytes(uiImg.buffer.asUint8List());
-  final img = decodeImage(imgFile.readAsBytesSync());
-
-  generator.image(img);
-} catch (e) {
-  print(e);
-}
-```
-
-## Using Code Tables
-
-Different printers support different sets of code tables. Some printer models are defined in `CapabilityProfile` class. So, if you want to change the default code table, it's important to choose the right profile:
-
-```dart
-// Xprinter XP-N160I
-final profile = await CapabilityProfile.load('XP-N160I');
-final generator = Generator(PaperSize.mm80, profile);
-bytes += generator.setGlobalCodeTable('CP1252');
-```
-
-All available profiles can be retrieved by calling :
+ดู profile ที่มีอยู่ได้ด้วย:
 
 ```dart
 final profiles = await CapabilityProfile.getAvailableProfiles();
 ```
 
-## How to Help
+ข้อมูล profile อยู่ใน `lib/resources/capabilities.json` เครื่องพิมพ์แต่ละรุ่นอาจรองรับ code table, barcode, การตัดกระดาษ และคำสั่งรูปภาพไม่เหมือนกัน ควรยึด self-test และคู่มือของเครื่องจริงเป็นหลัก
 
-- Add a CapabilityProfile to support your printer's model. A new profile should be added to `lib/resources/capabilities.json` file
-- Test your printer and add it in the table: [Wifi/Network printer](https://github.com/andrey-ushakov/esc_pos_printer/blob/master/printers.md) or [Bluetooth printer](https://github.com/andrey-ushakov/esc_pos_bluetooth/blob/master/printers.md)
-- Test and report bugs
-- Share your ideas about what could be improved (code optimization, new features...)
+## ย้ายจาก 1.x
+
+1. ใช้ Flutter/Dart ที่รองรับ Dart 3
+2. เปลี่ยน dependency ให้ใช้ Git repository และ branch `master` ตามตัวอย่างด้านบน
+3. อัปเดตโค้ดที่ใช้ `package:image` ให้เป็น API ของ image 4.x
+4. เปลี่ยนการพิมพ์ไทยจาก `textEncoded(cp874Bytes)` เป็น `text(..., styles: const PosStyles(codeTable: 'CP874'))`
+5. เปลี่ยนการโหลด profile แบบ positional เป็น `CapabilityProfile.load(name: 'profile')`
+6. ทดสอบ byte output และพิมพ์กับเครื่องจริงก่อนนำขึ้น production
+
+`textEncoded()` ยังใช้ได้สำหรับกรณีที่ผู้เรียกต้องควบคุม byte encoding เอง

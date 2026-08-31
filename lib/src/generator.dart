@@ -8,11 +8,11 @@
 
 import 'dart:convert';
 import 'dart:typed_data' show Uint8List;
-import 'package:hex/hex.dart';
-import 'package:image/image.dart';
-import 'package:gbk_codec/gbk_codec.dart';
+
 import 'package:esc_pos_utils/esc_pos_utils.dart';
-import 'enums.dart';
+import 'package:gbk_codec/gbk_codec.dart';
+import 'package:image/image.dart';
+
 import 'commands.dart';
 
 class Generator {
@@ -65,7 +65,11 @@ class Generator {
     return charsPerLine;
   }
 
-  Uint8List _encode(String text, {bool isKanji = false}) {
+  Uint8List _encode(
+    String text, {
+    bool isKanji = false,
+    String? codeTable,
+  }) {
     // replace some non-ascii characters
     text = text
         .replaceAll("’", "'")
@@ -73,11 +77,21 @@ class Generator {
         .replaceAll("»", '"')
         .replaceAll(" ", ' ')
         .replaceAll("•", '.');
-    if (!isKanji) {
-      return latin1.encode(text);
-    } else {
+    if (isKanji) {
       return Uint8List.fromList(gbk_bytes.encode(text));
     }
+    if ((codeTable ?? _codeTable ?? _styles.codeTable) == 'CP874') {
+      return Uint8List.fromList(text.runes.map((char) {
+        if (char <= 0x7f) return char;
+        if (char >= 0x0e01 && char <= 0x0e3a) return char - 0x0d60;
+        if (char == 0x0e3f) return 0xdf;
+        if (char >= 0x0e40 && char <= 0x0e5b) return char - 0x0d60;
+        final codePoint = char.toRadixString(16).toUpperCase();
+        throw FormatException(
+            'Character U+$codePoint cannot be encoded in CP874');
+      }).toList());
+    }
+    return latin1.encode(text);
   }
 
   List _getLexemes(String text) {
@@ -145,16 +159,22 @@ class Generator {
 
     // Create a black bottom layer
     final biggerImage = copyResize(image, width: widthPx, height: heightPx);
-    fill(biggerImage, 0);
+    fill(biggerImage, color: ColorRgb8(0, 0, 0));
     // Insert source image into bigger one
-    drawImage(biggerImage, image, dstX: 0, dstY: 0);
+    compositeImage(biggerImage, image, dstX: 0, dstY: 0);
 
     int left = 0;
     final List<List<int>> blobs = [];
 
     while (left < widthPx) {
-      final Image slice = copyCrop(biggerImage, left, 0, lineHeight, heightPx);
-      final Uint8List bytes = slice.getBytes(format: Format.luminance);
+      final Image slice = copyCrop(
+        biggerImage,
+        x: left,
+        y: 0,
+        width: lineHeight,
+        height: heightPx,
+      );
+      final Uint8List bytes = slice.getBytes(order: ChannelOrder.red);
       blobs.add(bytes);
       left += lineHeight;
     }
@@ -173,7 +193,7 @@ class Generator {
 
     // R/G/B channels are same -> keep only one channel
     final List<int> oneChannelBytes = [];
-    final List<int> buffer = image.getBytes(format: Format.rgba);
+    final List<int> buffer = image.getBytes(order: ChannelOrder.rgba);
     for (int i = 0; i < buffer.length; i += 4) {
       oneChannelBytes.add(buffer[i]);
     }
@@ -351,7 +371,11 @@ class Generator {
     List<int> bytes = [];
     if (!containsChinese) {
       bytes += _text(
-        _encode(text, isKanji: containsChinese),
+        _encode(
+          text,
+          isKanji: containsChinese,
+          codeTable: styles.codeTable,
+        ),
         styles: styles,
         isKanji: containsChinese,
         maxCharsPerLine: maxCharsPerLine,
@@ -481,7 +505,7 @@ class Generator {
         // CASE 1: containsChinese = false
         Uint8List encodedToPrint = cols[i].textEncoded != null
             ? cols[i].textEncoded!
-            : _encode(cols[i].text);
+            : _encode(cols[i].text, codeTable: cols[i].styles.codeTable);
 
         // If the col's content is too long, split it to the next row
         int realCharactersNb = encodedToPrint.length;
@@ -544,7 +568,11 @@ class Generator {
         // Print each lexeme using codetable OR kanji
         for (var j = 0; j < lexemes.length; ++j) {
           bytes += _text(
-            _encode(lexemes[j], isKanji: isLexemeChinese[j]),
+            _encode(
+              lexemes[j],
+              isKanji: isLexemeChinese[j],
+              codeTable: cols[i].styles.codeTable,
+            ),
             styles: cols[i].styles,
             colInd: colInd,
             colWidth: cols[i].width,
@@ -559,7 +587,7 @@ class Generator {
     bytes += emptyLines(1);
 
     if (isNextRow) {
-      row(nextRow);
+      bytes += row(nextRow);
     }
     return bytes;
   }
@@ -573,14 +601,14 @@ class Generator {
     bytes += setStyles(PosStyles().copyWith(align: align));
 
     final Image image = Image.from(imgSrc); // make a copy
-    const bool highDensityHorizontal = true;
-    const bool highDensityVertical = true;
-
     invert(image);
-    flip(image, Flip.horizontal);
-    final Image imageRotated = copyRotate(image, 270);
+    final Image imageFlipped = copyFlip(
+      image,
+      direction: FlipDirection.horizontal,
+    );
+    final Image imageRotated = copyRotate(imageFlipped, angle: 270);
 
-    const int lineHeight = highDensityVertical ? 3 : 1;
+    const int lineHeight = 3;
     final List<List<int>> blobs = _toColumnFormat(imageRotated, lineHeight * 8);
 
     // Compress according to line density
@@ -592,8 +620,7 @@ class Generator {
     }
 
     final int heightPx = imageRotated.height;
-    const int densityByte =
-        (highDensityHorizontal ? 1 : 0) + (highDensityVertical ? 32 : 0);
+    const int densityByte = 33;
 
     final List<int> header = List.from(cBitImg.codeUnits);
     header.add(densityByte);
@@ -791,12 +818,9 @@ class Generator {
         }
       }
 
-      final hexStr = fromPos.round().toRadixString(16).padLeft(3, '0');
-      final hexPair = HEX.decode(hexStr);
-
       // Position
       bytes += Uint8List.fromList(
-        List.from(cPos.codeUnits)..addAll([hexPair[1], hexPair[0]]),
+        List.from(cPos.codeUnits)..addAll(_intLowHigh(fromPos.round(), 2)),
       );
     }
 
@@ -822,7 +846,11 @@ class Generator {
     int? colInd = 0;
     for (var i = 0; i < lexemes.length; ++i) {
       bytes += _text(
-        _encode(lexemes[i], isKanji: isLexemeChinese[i]),
+        _encode(
+          lexemes[i],
+          isKanji: isLexemeChinese[i],
+          codeTable: styles.codeTable,
+        ),
         styles: styles,
         colInd: colInd,
         isKanji: isLexemeChinese[i],

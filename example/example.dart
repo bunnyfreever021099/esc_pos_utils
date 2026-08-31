@@ -1,10 +1,9 @@
-import 'package:image/image.dart';
-import 'dart:typed_data';
-import 'package:flutter/services.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
+import 'package:flutter/services.dart';
+import 'package:image/image.dart';
 
 Future<void> main() async {
-  final profile = await CapabilityProfile.load();
+  final profile = await CapabilityProfile.load(name: 'XP-N160I');
   final generator = Generator(PaperSize.mm80, profile);
   List<int> bytes = [];
 
@@ -14,6 +13,8 @@ Future<void> main() async {
       styles: PosStyles(codeTable: 'CP1252'));
   bytes += generator.text('Special 2: blåbærgrød',
       styles: PosStyles(codeTable: 'CP1252'));
+  bytes +=
+      generator.text('ภาษาไทย', styles: const PosStyles(codeTable: 'CP874'));
 
   bytes += generator.text('Bold text', styles: PosStyles(bold: true));
   bytes += generator.text('Reverse text', styles: PosStyles(reverse: true));
@@ -55,7 +56,7 @@ Future<void> main() async {
   final Uint8List imgBytes = data.buffer.asUint8List();
   final Image image = decodeImage(imgBytes)!;
   bytes += generator.image(image);
-  // Print image using an alternative (obsolette) command
+  // Print image using an alternative (obsolete) command
   // bytes += generator.imageRaster(image);
 
   // Print barcode
@@ -71,4 +72,5 @@ Future<void> main() async {
 
   bytes += generator.feed(2);
   bytes += generator.cut();
+  print(bytes);
 }
